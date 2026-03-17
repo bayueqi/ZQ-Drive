@@ -194,16 +194,74 @@ function handleMergeRequest() {
 
         cleanTempDir($tempDir);
 
-        // 生成随机token
-        $token = bin2hex(random_bytes(16));
+        // 处理ZIP文件
+        if ($fileType === 'application/zip') {
+            // 创建解压目录
+            $extractDir = 'temp_extract_' . uniqid() . '/';
+            mkdir($extractDir, 0755, true);
+            
+            // 解压ZIP文件
+            $zip = new ZipArchive();
+            if ($zip->open($finalPath) === TRUE) {
+                $zip->extractTo($extractDir);
+                $zip->close();
+                
+                // 读取解压后的文件
+                $extractedFiles = [];
+                $iterator = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($extractDir));
+                foreach ($iterator as $file) {
+                    if ($file->isFile()) {
+                        $extractedFiles[] = $file->getPathname();
+                    }
+                }
+                
+                // 保存解压后的文件
+                foreach ($extractedFiles as $extractedFile) {
+                    $relativePath = str_replace($extractDir, '', $extractedFile);
+                    $extFileName = basename($extractedFile);
+                    $extFileSize = filesize($extractedFile);
+                    $extFileType = mime_content_type($extractedFile);
+                    
+                    // 生成新的文件名
+                    $extExtension = pathinfo($extFileName, PATHINFO_EXTENSION);
+                    $extNewFilename = uniqid() . '.' . $extExtension;
+                    $extFinalPath = $uploadDir . $extNewFilename;
+                    
+                    // 移动文件
+                    if (rename($extractedFile, $extFinalPath)) {
+                        // 生成随机token
+                        $extToken = bin2hex(random_bytes(16));
+                        
+                        // 保存文件信息到数据库
+                        saveFileToDatabase($extFileName, $extFinalPath, $extFileSize, $extFileType, $description, $folderId, $extToken);
+                    }
+                }
+                
+                // 清理临时文件
+                array_map('unlink', glob($extractDir . '*'));
+                rmdir($extractDir);
+                unlink($finalPath);
+                
+                echo json_encode([
+                    'success' => true,
+                    'message' => 'ZIP文件上传并解压成功'
+                ]);
+            } else {
+                unlink($finalPath);
+                throw new Exception('无法解压ZIP文件');
+            }
+        } else {
+            // 生成随机token
+            $token = bin2hex(random_bytes(16));
 
-        saveFileToDatabase($fileName, $finalPath, $actualFileSize, $fileType, $description, $folderId, $token);
+            saveFileToDatabase($fileName, $finalPath, $actualFileSize, $fileType, $description, $folderId, $token);
 
-        echo json_encode([
-            'success' => true,
-            'message' => '文件上传成功',
-            'fileId' => $finalPath
-        ]);
+            echo json_encode([
+                'success' => true,
+                'message' => '文件上传成功',
+                'fileId' => $finalPath
+            ]);
+        }
     } catch (Exception $e) {
         if (file_exists($finalPath)) {
             unlink($finalPath);

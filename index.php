@@ -36,6 +36,8 @@ require_once $configFiles[0];
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>ZQ-Drive</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg t='1770824389605' class='icon' viewBox='0 0 1408 1024' version='1.1' xmlns='http://www.w3.org/2000/svg' p-id='5614' xmlns:xlink='http://www.w3.org/1999/xlink' width='32' height='32'%3E%3Cpath d='M620.8 454.4h19.2c19.2 0 32-12.8 32-32s-12.8-32-32-32h-19.2c-44.8 0-76.8-25.6-76.8-57.6s32-57.6 76.8-57.6c12.8 0 19.2 0 32 6.4 19.2 6.4 38.4-6.4 44.8-25.6 0-19.2 25.6-32 51.2-32 32 0 51.2 19.2 51.2 38.4v6.4c-6.4 19.2 6.4 38.4 25.6 44.8 25.6 6.4 38.4 19.2 38.4 38.4s-25.6 38.4-51.2 38.4h-25.6c-19.2 0-32 12.8-32 32s12.8 32 32 32h25.6c64 0 115.2-44.8 115.2-102.4 0-38.4-25.6-76.8-64-89.6 0-57.6-57.6-102.4-115.2-102.4-44.8 0-83.2 19.2-102.4 57.6h-25.6c-76.8 0-140.8 51.2-140.8 121.6s64 115.2 140.8 115.2zM544 768h-320c-19.2 0-32 12.8-32 32s12.8 32 32 32h320c19.2 0 32-12.8 32-32s-12.8-32-32-32z' fill='%231296db' p-id='5615'%3E%3C/path%3E%3Cpath d='M1388.8 716.8v-19.2l-153.6-544C1216 64 1132.8 0 1056 0h-704C275.2 0 192 64 166.4 147.2L12.8 691.2v19.2c-6.4 32-12.8 57.6-12.8 89.6C0 921.6 102.4 1024 224 1024h960c121.6 0 224-102.4 224-224 0-32-6.4-57.6-19.2-83.2zM230.4 166.4C243.2 108.8 300.8 64 352 64h704c51.2 0 102.4 44.8 121.6 102.4l121.6 448c-32-25.6-70.4-38.4-115.2-38.4h-960c-44.8 0-83.2 12.8-115.2 32l121.6-441.6zM1184 960h-960C134.4 960 64 889.6 64 800c0-12.8 0-19.2 6.4-32v-6.4c12.8-70.4 76.8-121.6 153.6-121.6h960c76.8 0 140.8 51.2 153.6 128 0 12.8 6.4 19.2 6.4 32 0 89.6-70.4 160-160 160z' fill='%231296db' p-id='5616'%3E%3C/path%3E%3Cpath d='M1120 704c-51.2 0-96 44.8-96 96s44.8 96 96 96 96-44.8 96-96-44.8-96-96-96z m0 128c-19.2 0-32-12.8-32-32s12.8-32 32-32 32 12.8 32 32-12.8 32-32 32z' fill='%231296db' p-id='5617'%3E%3C/path%3E%3C/svg%3E" type="image/svg+xml">
+  <!-- 引入JSZip库用于文件压缩 -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <style>
     * {
       margin: 0;
@@ -1304,32 +1306,54 @@ require_once $configFiles[0];
     }
 
     async function uploadMultipleFiles(files) {
-      // 限制并发上传数，避免服务器压力过大
-      const maxConcurrentUploads = 2;
-      const results = [];
-      
-      for (let i = 0; i < files.length; i += maxConcurrentUploads) {
-        const batch = files.slice(i, i + maxConcurrentUploads);
-        const batchPromises = batch.map((file, index) => uploadSingleFile(file, i + index));
-        const batchResults = await Promise.allSettled(batchPromises);
-        results.push(...batchResults);
-      }
-      
-      let uploadedCount = 0;
-      let failedCount = 0;
-      
-      results.forEach(result => {
-        if (result.status === 'fulfilled') {
-          uploadedCount++;
+      if (files.length === 1) {
+        // 单个文件直接上传
+        const result = await Promise.allSettled([uploadSingleFile(files[0], 0)]);
+        let uploadedCount = 0;
+        let failedCount = 0;
+        
+        result.forEach(r => {
+          if (r.status === 'fulfilled') {
+            uploadedCount++;
+          } else {
+            failedCount++;
+          }
+        });
+        
+        if (failedCount === 0) {
+          showNotification(`成功上传 ${uploadedCount} 个文件`, 'success');
         } else {
-          failedCount++;
+          showNotification(`成功上传 ${uploadedCount} 个文件，失败 ${failedCount} 个`, 'error');
         }
-      });
-      
-      if (failedCount === 0) {
-        showNotification(`成功上传 ${uploadedCount} 个文件`, 'success');
-      } else {
-        showNotification(`成功上传 ${uploadedCount} 个文件，失败 ${failedCount} 个`, 'error');
+      } else if (files.length > 1) {
+        // 多个文件压缩后上传
+        showNotification('正在压缩文件，请稍候...', 'info');
+        
+        try {
+          const zip = new JSZip();
+          
+          // 添加文件到ZIP
+          for (const file of files) {
+            zip.file(file.name, file);
+          }
+          
+          // 生成ZIP文件
+          const zipBlob = await zip.generateAsync({ type: 'blob' });
+          
+          // 创建一个新的File对象
+          const zipFile = new File([zipBlob], `upload_${Date.now()}.zip`, { type: 'application/zip' });
+          
+          // 上传ZIP文件
+          const result = await Promise.allSettled([uploadSingleFile(zipFile, 0)]);
+          
+          if (result[0].status === 'fulfilled') {
+            showNotification(`成功上传 ${files.length} 个文件（已压缩）`, 'success');
+          } else {
+            showNotification('上传失败', 'error');
+          }
+        } catch (error) {
+          showNotification('压缩文件失败: ' + error.message, 'error');
+        }
       }
       
       loadFiles();
