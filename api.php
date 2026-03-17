@@ -6,23 +6,7 @@ header('Content-Type: application/json');
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     $action = $_GET['action'] ?? 'list';
     
-    if ($action === 'getToken') {
-        $id = intval($_GET['id'] ?? 0);
-        try {
-            $stmt = $pdo->prepare("SELECT token FROM files WHERE id = ?");
-            $stmt->execute([$id]);
-            $file = $stmt->fetch();
-            
-            if ($file) {
-                echo json_encode(['success' => true, 'token' => $file['token']]);
-            } else {
-                echo json_encode(['success' => false, 'message' => '文件不存在']);
-            }
-        } catch (PDOException $e) {
-            echo json_encode(['success' => false, 'message' => '数据库错误：' . $e->getMessage()]);
-        }
-        exit;
-    } elseif ($action === 'tree') {
+    if ($action === 'tree') {
         // 获取所有文件夹和文件用于构建树形结构
         try {
             $stmt = $pdo->prepare("SELECT * FROM folders ORDER BY name ASC");

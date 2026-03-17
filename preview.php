@@ -1,15 +1,15 @@
 <?php
 require_once 'config.php';
 
-if (!isset($_GET['token'])) {
-    die('缺少访问令牌');
+if (!isset($_GET['id'])) {
+    die('文件 ID 未指定');
 }
 
-$token = $_GET['token'];
+$id = intval($_GET['id']);
 
 try {
-    $stmt = $pdo->prepare("SELECT * FROM files WHERE token = ?");
-    $stmt->execute([$token]);
+    $stmt = $pdo->prepare("SELECT * FROM files WHERE id = ?");
+    $stmt->execute([$id]);
     $file = $stmt->fetch();
     
     if (!$file) {
@@ -28,10 +28,10 @@ try {
     $extension = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
     
     // 获取文件 URL（预览模式）
-    $fileUrl = 'download.php?token=' . $token . '&mode=inline';
+    $fileUrl = 'download.php?id=' . $id . '&mode=inline';
     
     // 获取下载 URL（下载按钮使用）
-    $downloadUrl = 'download.php?token=' . $token;
+    $downloadUrl = 'download.php?id=' . $id;
     
     // 根据文件类型选择预览方式
     $previewType = 'unknown';

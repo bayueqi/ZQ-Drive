@@ -130,9 +130,7 @@ function saveFileToDatabase($fileName, $finalPath, $fileSize, $fileType, $descri
         $fileSize = filesize($finalPath);
     }
 
-    $token = bin2hex(random_bytes(32)); // 生成64位随机token
-
-    $stmt = $pdo->prepare("INSERT INTO files (filename, filepath, filesize, filetype, description, folder_id, token) VALUES (?, ?, ?, ?, ?, ?, ?)");
-    $stmt->execute([$fileName, $finalPath, $fileSize, $fileType, $description, $folderId > 0 ? $folderId : null, $token]);
+    $stmt = $pdo->prepare("INSERT INTO files (filename, filepath, filesize, filetype, description, folder_id) VALUES (?, ?, ?, ?, ?, ?)");
+    $stmt->execute([$fileName, $finalPath, $fileSize, $fileType, $description, $folderId > 0 ? $folderId : null]);
 }
 ?>

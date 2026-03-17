@@ -1,16 +1,16 @@
 <?php
 require_once 'config.php';
 
-if (!isset($_GET['token'])) {
-    die('缺少访问令牌');
+if (!isset($_GET['id'])) {
+    die('缺少文件 ID');
 }
 
-$token = $_GET['token'];
+$id = intval($_GET['id']);
 $mode = $_GET['mode'] ?? 'download'; // download 或 inline
 
 try {
-    $stmt = $pdo->prepare("SELECT * FROM files WHERE token = ?");
-    $stmt->execute([$token]);
+    $stmt = $pdo->prepare("SELECT * FROM files WHERE id = ?");
+    $stmt->execute([$id]);
     $file = $stmt->fetch();
 
     if (!$file) {

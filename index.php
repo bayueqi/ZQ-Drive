@@ -1557,8 +1557,8 @@ require_once 'config.php';
           <div class="file-card">
             <input type="checkbox" class="file-checkbox" onclick="event.stopPropagation(); toggleFileSelection(${file.id})" data-file-id="${file.id}">
             <div class="file-actions">
-              <a href="preview.php?token=${file.token}" target="_blank" class="file-action-btn" title="预览">👁️</a>
-              <a href="download.php?token=${file.token}" class="file-action-btn" title="下载">⬇️</a>
+              <button class="file-action-btn" onclick="event.stopPropagation(); previewFile(${file.id})" title="预览">👁️</button>
+              <button class="file-action-btn" onclick="event.stopPropagation(); downloadFile(${file.id})" title="下载">⬇️</button>
               <button class="file-action-btn" onclick="event.stopPropagation(); showEditModal(${file.id})" title="编辑">✏️</button>
               <button class="file-action-btn" onclick="event.stopPropagation(); deleteFile(${file.id})" title="删除">🗑️</button>
             </div>
@@ -1723,40 +1723,20 @@ require_once 'config.php';
       });
     }
 
-    // 保留原函数以兼容可能的其他调用
     function downloadFile(id) {
-      // 先获取文件的token
-      fetch('api.php?action=getToken&id=' + id)
-        .then(response => response.json())
-        .then(data => {
-          if (data.success) {
-            const link = document.createElement('a');
-            link.href = 'download.php?token=' + data.token;
-            link.target = '_blank';
-            link.style.display = 'none';
-            document.body.appendChild(link);
-            link.click();
-            setTimeout(() => {
-              document.body.removeChild(link);
-            }, 100);
-          } else {
-            showNotification('获取下载链接失败', 'error');
-          }
-        });
+      const link = document.createElement('a');
+      link.href = 'download.php?id=' + id;
+      link.target = '_blank';
+      link.style.display = 'none';
+      document.body.appendChild(link);
+      link.click();
+      setTimeout(() => {
+        document.body.removeChild(link);
+      }, 100);
     }
 
-    // 保留原函数以兼容可能的其他调用
     function previewFile(id) {
-      // 先获取文件的token
-      fetch('api.php?action=getToken&id=' + id)
-        .then(response => response.json())
-        .then(data => {
-          if (data.success) {
-            window.open('preview.php?token=' + data.token, '_blank');
-          } else {
-            showNotification('获取预览链接失败', 'error');
-          }
-        });
+      window.open('preview.php?id=' + id, '_blank');
     }
 
     function showEditModal(fileId) {
