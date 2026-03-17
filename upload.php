@@ -2,11 +2,16 @@
 // 查找 config 文件
 $configFiles = glob('config_*.php');
 if (empty($configFiles)) {
-    die('配置文件不存在');
+    // 如果没有找到随机名称的 config 文件，尝试加载默认的 config.php
+    if (file_exists('config.php')) {
+        require_once 'config.php';
+    } else {
+        die('配置文件不存在');
+    }
+} else {
+    // 加载第一个找到的 config 文件
+    require_once $configFiles[0];
 }
-
-// 加载第一个找到的 config 文件
-require_once $configFiles[0];
 
 header('Content-Type: application/json');
 
@@ -32,7 +37,7 @@ function handleChunkUpload() {
         exit;
     }
 
-    if (!isset($_FILES['chunk'])) {
+    if (!isset($_FILES['fileChunk'])) {
         echo json_encode(['success' => false, 'message' => '未收到文件块']);
         exit;
     }
@@ -42,7 +47,7 @@ function handleChunkUpload() {
     $fileHash = $_POST['fileHash'];
     $fileName = $_POST['fileName'];
     
-    $chunkFile = $_FILES['chunk'];
+    $chunkFile = $_FILES['fileChunk'];
     
     if ($chunkFile['error'] !== UPLOAD_ERR_OK) {
         echo json_encode(['success' => false, 'message' => '文件块上传失败']);
@@ -52,7 +57,24 @@ function handleChunkUpload() {
     // 创建临时目录
     $tempDir = 'temp_chunks/' . $fileHash . '/';
     if (!is_dir($tempDir)) {
-        mkdir($tempDir, 0755, true);
+        // 确保temp_chunks目录存在
+        if (!is_dir('temp_chunks')) {
+            if (!mkdir('temp_chunks', 0755, true)) {
+                echo json_encode(['success' => false, 'message' => '无法创建temp_chunks目录']);
+                exit;
+            }
+        }
+        if (!mkdir($tempDir, 0755, true)) {
+            echo json_encode(['success' => false, 'message' => '无法创建临时目录']);
+            exit;
+        }
+    }
+    // 确保临时目录有写入权限
+    if (!is_writable($tempDir)) {
+        if (!chmod($tempDir, 0755)) {
+            echo json_encode(['success' => false, 'message' => '无法设置临时目录权限']);
+            exit;
+        }
     }
 
     $chunkPath = $tempDir . $chunk;
@@ -84,12 +106,34 @@ function handleMergeRequest() {
         echo json_encode(['success' => false, 'message' => '临时文件目录不存在']);
         exit;
     }
+    
+    // 检查临时目录是否有文件块
+    $chunkFiles = glob($tempDir . '*');
+    if (empty($chunkFiles)) {
+        echo json_encode(['success' => false, 'message' => '临时目录中没有文件块']);
+        exit;
+    }
 
-    // 生成随机上传目录名称
-    $randomDir = 'upload_' . bin2hex(random_bytes(8));
-    $uploadDir = $randomDir . '/';
-    if (!is_dir($uploadDir)) {
-        mkdir($uploadDir, 0755, true);
+    // 检查是否已经存在uploads_开头的目录
+    $uploadDirs = glob('uploads_*');
+    if (!empty($uploadDirs)) {
+        // 使用第一个找到的uploads_目录
+        $uploadDir = $uploadDirs[0] . '/';
+    } else {
+        // 生成随机上传目录名称
+        $randomDir = 'uploads_' . bin2hex(random_bytes(8));
+        $uploadDir = $randomDir . '/';
+        if (!mkdir($uploadDir, 0755, true)) {
+            echo json_encode(['success' => false, 'message' => '无法创建上传目录']);
+            exit;
+        }
+    }
+    // 确保上传目录有写入权限
+    if (!is_writable($uploadDir)) {
+        if (!chmod($uploadDir, 0755)) {
+            echo json_encode(['success' => false, 'message' => '无法设置上传目录权限']);
+            exit;
+        }
     }
 
     $extension = pathinfo($fileName, PATHINFO_EXTENSION);
@@ -106,22 +150,54 @@ function handleMergeRequest() {
         $chunkFiles = glob($tempDir . '*');
         natsort($chunkFiles); // 使用自然排序，确保块按顺序合并
 
+        // 检查文件块数量
+        if (empty($chunkFiles)) {
+            fclose($finalFile);
+            throw new Exception('临时目录中没有文件块');
+        }
+
+        $totalWritten = 0;
         foreach ($chunkFiles as $chunkFile) {
+            // 检查文件块是否存在且可读
+            if (!file_exists($chunkFile) || !is_readable($chunkFile)) {
+                fclose($finalFile);
+                throw new Exception('文件块不存在或不可读: ' . basename($chunkFile));
+            }
+            
             // 使用更高效的读取方式
             $chunkData = file_get_contents($chunkFile);
             if ($chunkData === false) {
-                throw new Exception('无法读取文件块');
+                fclose($finalFile);
+                throw new Exception('无法读取文件块: ' . basename($chunkFile));
             }
-            fwrite($finalFile, $chunkData);
+            
+            // 写入文件块
+            $written = fwrite($finalFile, $chunkData);
+            if ($written === false) {
+                fclose($finalFile);
+                throw new Exception('无法写入文件块: ' . basename($chunkFile));
+            }
+            $totalWritten += $written;
+            
             // 立即释放内存
             unset($chunkData);
         }
 
         fclose($finalFile);
 
+        // 检查文件大小，如果为0，抛出异常
+        $actualFileSize = filesize($finalPath);
+        if ($actualFileSize === 0 || $totalWritten === 0) {
+            unlink($finalPath);
+            throw new Exception('文件合并失败，生成的文件为空');
+        }
+
         cleanTempDir($tempDir);
 
-        saveFileToDatabase($fileName, $finalPath, $fileSize, $fileType, $description, $folderId);
+        // 生成随机token
+        $token = bin2hex(random_bytes(16));
+
+        saveFileToDatabase($fileName, $finalPath, $actualFileSize, $fileType, $description, $folderId, $token);
 
         echo json_encode([
             'success' => true,
@@ -147,14 +223,14 @@ function cleanTempDir($tempDir) {
     rmdir($tempDir);
 }
 
-function saveFileToDatabase($fileName, $finalPath, $fileSize, $fileType, $description, $folderId = 0) {
+function saveFileToDatabase($fileName, $finalPath, $fileSize, $fileType, $description, $folderId = 0, $token = null) {
     global $pdo;
     
     if (!$fileSize) {
         $fileSize = filesize($finalPath);
     }
 
-    $stmt = $pdo->prepare("INSERT INTO files (filename, filepath, filesize, filetype, description, folder_id) VALUES (?, ?, ?, ?, ?, ?)");
-    $stmt->execute([$fileName, $finalPath, $fileSize, $fileType, $description, $folderId > 0 ? $folderId : null]);
+    $stmt = $pdo->prepare("INSERT INTO files (filename, filepath, filesize, filetype, description, folder_id, token) VALUES (?, ?, ?, ?, ?, ?, ?)");
+    $stmt->execute([$fileName, $finalPath, $fileSize, $fileType, $description, $folderId > 0 ? $folderId : null, $token]);
 }
 ?>

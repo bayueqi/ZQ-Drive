@@ -1,5 +1,21 @@
 <?php
-require_once 'config.php';
+// 禁止输出警告信息，确保返回纯JSON
+error_reporting(0);
+ini_set('display_errors', 0);
+
+// 查找 config 文件
+$configFiles = glob('config_*.php');
+if (empty($configFiles)) {
+    // 如果没有找到随机名称的 config 文件，尝试加载默认的 config.php
+    if (file_exists('config.php')) {
+        require_once 'config.php';
+    } else {
+        die('配置文件不存在');
+    }
+} else {
+    // 加载第一个找到的 config 文件
+    require_once $configFiles[0];
+}
 
 header('Content-Type: application/json');
 

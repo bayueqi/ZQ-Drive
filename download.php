@@ -2,28 +2,80 @@
 // 查找 config 文件
 $configFiles = glob('config_*.php');
 if (empty($configFiles)) {
-    die('配置文件不存在');
+    // 如果没有找到随机名称的 config 文件，尝试加载默认的 config.php
+    if (file_exists('config.php')) {
+        require_once 'config.php';
+    } else {
+        die('配置文件不存在');
+    }
+} else {
+    // 加载第一个找到的 config 文件
+    require_once $configFiles[0];
 }
 
-// 加载第一个找到的 config 文件
-require_once $configFiles[0];
+// 无需登录即可下载文件
 
-// 检查登录状态
-session_start();
-if (!isset($_SESSION['logged_in']) || $_SESSION['logged_in'] !== true) {
-    die('未授权访问');
+// 处理批量压缩下载
+if (isset($_GET['action']) && $_GET['action'] === 'zip') {
+    if (!isset($_GET['tokens'])) {
+        die('缺少文件token');
+    }
+    
+    $tokens = explode(',', $_GET['tokens']);
+    
+    // 创建临时目录
+    $tempDir = 'temp_zip_' . uniqid() . '/';
+    mkdir($tempDir, 0755, true);
+    
+    // 准备压缩文件
+    $zipFilename = 'download_' . date('YmdHis') . '.zip';
+    $zipPath = $tempDir . $zipFilename;
+    
+    // 创建ZIP文件
+    $zip = new ZipArchive();
+    if ($zip->open($zipPath, ZipArchive::CREATE) !== TRUE) {
+        die('无法创建压缩文件');
+    }
+    
+    // 添加文件到ZIP
+    foreach ($tokens as $token) {
+        $stmt = $pdo->prepare("SELECT * FROM files WHERE token = ?");
+        $stmt->execute([$token]);
+        $file = $stmt->fetch();
+        
+        if ($file && file_exists($file['filepath'])) {
+            $zip->addFile($file['filepath'], $file['filename']);
+        }
+    }
+    
+    $zip->close();
+    
+    // 发送压缩文件
+    if (file_exists($zipPath)) {
+        header('Content-Type: application/zip');
+        header('Content-Disposition: attachment; filename=' . $zipFilename);
+        header('Content-Length: ' . filesize($zipPath));
+        readfile($zipPath);
+        
+        // 清理临时文件
+        unlink($zipPath);
+        rmdir($tempDir);
+    } else {
+        die('压缩文件创建失败');
+    }
+    exit;
 }
 
-if (!isset($_GET['id'])) {
-    die('缺少文件 ID');
+if (!isset($_GET['token'])) {
+    die('缺少文件 token');
 }
 
-$id = intval($_GET['id']);
+$token = $_GET['token'];
 $mode = $_GET['mode'] ?? 'download'; // download 或 inline
 
 try {
-    $stmt = $pdo->prepare("SELECT * FROM files WHERE id = ?");
-    $stmt->execute([$id]);
+    $stmt = $pdo->prepare("SELECT * FROM files WHERE token = ?");
+    $stmt->execute([$token]);
     $file = $stmt->fetch();
 
     if (!$file) {

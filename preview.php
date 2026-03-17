@@ -2,27 +2,28 @@
 // 查找 config 文件
 $configFiles = glob('config_*.php');
 if (empty($configFiles)) {
-    die('配置文件不存在');
+    // 如果没有找到随机名称的 config 文件，尝试加载默认的 config.php
+    if (file_exists('config.php')) {
+        require_once 'config.php';
+    } else {
+        die('配置文件不存在');
+    }
+} else {
+    // 加载第一个找到的 config 文件
+    require_once $configFiles[0];
 }
 
-// 加载第一个找到的 config 文件
-require_once $configFiles[0];
+// 无需登录即可预览文件
 
-// 检查登录状态
-session_start();
-if (!isset($_SESSION['logged_in']) || $_SESSION['logged_in'] !== true) {
-    die('未授权访问');
+if (!isset($_GET['token'])) {
+    die('缺少文件 token');
 }
 
-if (!isset($_GET['id'])) {
-    die('文件 ID 未指定');
-}
-
-$id = intval($_GET['id']);
+$token = $_GET['token'];
 
 try {
-    $stmt = $pdo->prepare("SELECT * FROM files WHERE id = ?");
-    $stmt->execute([$id]);
+    $stmt = $pdo->prepare("SELECT * FROM files WHERE token = ?");
+    $stmt->execute([$token]);
     $file = $stmt->fetch();
     
     if (!$file) {
@@ -41,10 +42,10 @@ try {
     $extension = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
     
     // 获取文件 URL（预览模式）
-    $fileUrl = 'download.php?id=' . $id . '&mode=inline';
+    $fileUrl = 'download.php?token=' . $token . '&mode=inline';
     
     // 获取下载 URL（下载按钮使用）
-    $downloadUrl = 'download.php?id=' . $id;
+    $downloadUrl = 'download.php?token=' . $token;
     
     // 根据文件类型选择预览方式
     $previewType = 'unknown';

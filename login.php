@@ -1,7 +1,23 @@
 <?php
 session_start();
 
-$installed = file_exists('config.php') && file_exists('config.lock');
+// 查找 config 文件
+$configFiles = glob('config_*.php');
+if (empty($configFiles)) {
+    // 如果没有找到随机名称的 config 文件，尝试加载默认的 config.php
+    if (file_exists('config.php')) {
+        require_once 'config.php';
+    } else {
+        header('Location: setup.php');
+        exit;
+    }
+} else {
+    // 加载第一个找到的 config 文件
+    require_once $configFiles[0];
+}
+
+// 检查是否已安装
+$installed = file_exists('config.lock');
 
 if (!$installed) {
     header('Location: setup.php');
@@ -12,8 +28,6 @@ if (isset($_SESSION['logged_in']) && $_SESSION['logged_in'] === true) {
     header('Location: index.php');
     exit;
 }
-
-require_once 'config.php';
 
 $error = '';
 

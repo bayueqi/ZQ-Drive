@@ -1,7 +1,14 @@
 <?php
 session_start();
 
-$installed = file_exists('config.php') && file_exists('config.lock');
+// 检查是否已安装
+$configFiles = glob('config_*.php');
+$installed = !empty($configFiles) && file_exists('config.lock');
+
+// 兼容旧版本
+if (!$installed && file_exists('config.php') && file_exists('config.lock')) {
+    $installed = true;
+}
 
 if ($installed) {
     header('Location: index.php');
@@ -36,7 +43,8 @@ CREATE TABLE IF NOT EXISTS files (
   filetype VARCHAR(100),
   description TEXT,
   folder_id INT DEFAULT NULL,
-  upload_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  upload_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  token VARCHAR(255) NOT NULL UNIQUE
 );
 
 CREATE TABLE IF NOT EXISTS folders (
@@ -81,6 +89,9 @@ CREATE INDEX idx_parent_id ON folders(parent_id);
             if (!$db) {
                 $error = '会话已过期，请重新开始安装';
             } else {
+                // 生成随机配置文件名
+                $randomConfigName = 'config_' . bin2hex(random_bytes(8)) . '.php';
+
                 $configContent = "<?php
 \$host = '{$db['host']}';
 \$dbname = '{$db['dbname']}';
@@ -98,7 +109,7 @@ try {
 }
 ?>";
 
-                file_put_contents('config.php', $configContent);
+                file_put_contents($randomConfigName, $configContent);
                 file_put_contents('config.lock', date('Y-m-d H:i:s'));
 
                 unset($_SESSION['setup_db']);

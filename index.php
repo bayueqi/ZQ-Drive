@@ -4,10 +4,19 @@ session_start();
 // 查找 config 文件
 $configFiles = glob('config_*.php');
 if (empty($configFiles)) {
-    die('配置文件不存在');
+    // 如果没有找到随机名称的 config 文件，尝试加载默认的 config.php
+    if (file_exists('config.php')) {
+        require_once 'config.php';
+    } else {
+        header('Location: setup.php');
+        exit;
+    }
+} else {
+    // 加载第一个找到的 config 文件
+    require_once $configFiles[0];
 }
 
-if (!file_exists($configFiles[0]) || !file_exists('config.lock')) {
+if (!file_exists('config.lock')) {
     header('Location: setup.php');
     exit;
 }
@@ -889,6 +898,7 @@ require_once $configFiles[0];
         </div>
         <div class="batch-actions-buttons">
           <button class="btn secondary" onclick="clearSelection()">取消选择</button>
+          <button class="btn primary" onclick="batchDownloadZip()">批量下载</button>
           <button class="btn danger" onclick="batchDeleteFiles()">批量删除</button>
         </div>
       </div>
@@ -905,10 +915,6 @@ require_once $configFiles[0];
       <input type="file" id="fileInput" multiple style="display: none;">
       
       <div class="upload-progress" id="uploadProgress">
-        <div class="progress-bar">
-          <div class="progress-fill" id="progressFill"></div>
-        </div>
-        <div class="progress-text" id="progressText">上传中... 0%</div>
       </div>
 
       <div class="files-grid" id="filesList"></div>
@@ -998,8 +1004,6 @@ require_once $configFiles[0];
     const uploadArea = document.getElementById('uploadArea');
     const fileInput = document.getElementById('fileInput');
     const uploadProgress = document.getElementById('uploadProgress');
-    const progressFill = document.getElementById('progressFill');
-    const progressText = document.getElementById('progressText');
     const filesList = document.getElementById('filesList');
     const notification = document.getElementById('notification');
     const uploadModal = document.getElementById('uploadModal');
@@ -1290,26 +1294,37 @@ require_once $configFiles[0];
     function confirmUpload() {
       if (!currentFiles || currentFiles.length === 0) return;
       
+      // 复制当前文件数组，避免被后续上传覆盖
+      const filesToUpload = [...currentFiles];
+      
       uploadModal.classList.remove('show');
-      uploadMultipleFiles(currentFiles);
-      currentFiles = [];
+      uploadMultipleFiles(filesToUpload).finally(() => {
+        // 上传完成后不需要清空currentFiles，因为已经使用了副本
+      });
     }
 
     async function uploadMultipleFiles(files) {
+      // 限制并发上传数，避免服务器压力过大
+      const maxConcurrentUploads = 2;
+      const results = [];
+      
+      for (let i = 0; i < files.length; i += maxConcurrentUploads) {
+        const batch = files.slice(i, i + maxConcurrentUploads);
+        const batchPromises = batch.map((file, index) => uploadSingleFile(file, i + index));
+        const batchResults = await Promise.allSettled(batchPromises);
+        results.push(...batchResults);
+      }
+      
       let uploadedCount = 0;
       let failedCount = 0;
       
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i];
-        try {
-          await uploadSingleFile(file, i);
+      results.forEach(result => {
+        if (result.status === 'fulfilled') {
           uploadedCount++;
-        } catch (error) {
+        } else {
           failedCount++;
         }
-      }
-      
-      uploadProgress.style.display = 'none';
+      });
       
       if (failedCount === 0) {
         showNotification(`成功上传 ${uploadedCount} 个文件`, 'success');
@@ -1325,14 +1340,22 @@ require_once $configFiles[0];
         let filename = file.name;
         let description = '';
         
-        if (currentFiles.length === 1) {
-          filename = modalFileName.value;
-          description = modalDescription.value;
-        } else {
-          const nameInput = document.querySelector(`.file-name-input[data-index="${index}"]`);
-          const descInput = document.querySelector(`.file-desc-input[data-index="${index}"]`);
-          if (nameInput) filename = nameInput.value;
-          if (descInput) description = descInput.value;
+        // 保存当前的表单值，避免被后续上传覆盖
+        const currentModalFileName = modalFileName.value;
+        const currentModalDescription = modalDescription.value;
+        const currentNameInput = document.querySelector(`.file-name-input[data-index="${index}"]`);
+        const currentDescInput = document.querySelector(`.file-desc-input[data-index="${index}"]`);
+        
+        if (currentNameInput) {
+          filename = currentNameInput.value;
+        } else if (currentModalFileName) {
+          filename = currentModalFileName;
+        }
+        
+        if (currentDescInput) {
+          description = currentDescInput.value;
+        } else if (currentModalDescription) {
+          description = currentModalDescription;
         }
         
         const uploadOptions = {
@@ -1348,34 +1371,65 @@ require_once $configFiles[0];
 
     function calculateFileHash(file) {
       return new Promise((resolve) => {
-        const hash = btoa(encodeURIComponent(file.name + '-' + file.size + '-' + Date.now()))
+        // 生成更唯一的hash值，结合文件名、文件大小、时间戳和随机数
+        const hash = btoa(encodeURIComponent(file.name + '-' + file.size + '-' + Date.now() + '-' + Math.random()))
           .replace(/[^a-zA-Z0-9]/g, '')
-          .substring(0, 16) + '_' + Date.now();
+          .substring(0, 16) + '_' + Date.now() + '_' + Math.floor(Math.random() * 10000);
         resolve(hash);
       });
     }
 
     function uploadFile(file, options, resolve, reject) {
-      uploadProgress.style.display = 'block';
+      // 创建独立的进度条元素
+      const progressContainer = document.createElement('div');
+      progressContainer.className = 'upload-progress-item';
+      progressContainer.style.margin = '10px 0';
+      progressContainer.style.padding = '10px';
+      progressContainer.style.backgroundColor = '#f5f5f5';
+      progressContainer.style.borderRadius = '4px';
+      
+      const progressBar = document.createElement('div');
+      progressBar.style.height = '8px';
+      progressBar.style.backgroundColor = '#e0e0e0';
+      progressBar.style.borderRadius = '4px';
+      progressBar.style.overflow = 'hidden';
+      
+      const progressFill = document.createElement('div');
+      progressFill.style.height = '100%';
+      progressFill.style.backgroundColor = '#4caf50';
       progressFill.style.width = '0%';
-      progressText.textContent = `上传中... ${file.name}`;
+      progressFill.style.transition = 'width 0.3s ease';
+      
+      const progressText = document.createElement('div');
+      progressText.style.fontSize = '14px';
+      progressText.style.marginTop = '5px';
+      progressText.textContent = `上传中... ${file.name} 0%`;
+      
+      progressBar.appendChild(progressFill);
+      progressContainer.appendChild(progressBar);
+      progressContainer.appendChild(progressText);
+      
+      // 将进度条添加到页面
+      const uploadProgress = document.getElementById('uploadProgress');
+      uploadProgress.style.display = 'block';
+      uploadProgress.appendChild(progressContainer);
       
       const chunkSize = 10 * 1024 * 1024;
       const totalChunks = Math.ceil(file.size / chunkSize);
       let currentChunk = 0;
       
       calculateFileHash(file).then(hash => {
-        uploadChunk(file, hash, chunkSize, totalChunks, currentChunk, options, resolve, reject);
+        uploadChunk(file, hash, chunkSize, totalChunks, currentChunk, options, resolve, reject, progressFill, progressText, progressContainer);
       });
     }
 
-    function uploadChunk(file, hash, chunkSize, totalChunks, currentChunk, options, resolve, reject) {
+    function uploadChunk(file, hash, chunkSize, totalChunks, currentChunk, options, resolve, reject, progressFill, progressText, progressContainer) {
       const start = currentChunk * chunkSize;
       const end = Math.min(file.size, start + chunkSize);
       const chunk = file.slice(start, end);
       
       const formData = new FormData();
-      formData.append('chunk', chunk);
+      formData.append('fileChunk', chunk);
       formData.append('chunk', currentChunk);
       formData.append('totalChunks', totalChunks);
       formData.append('fileHash', hash);
@@ -1398,29 +1452,73 @@ require_once $configFiles[0];
             const response = JSON.parse(xhr.responseText);
             if (response.success) {
               if (currentChunk < totalChunks - 1) {
-                uploadChunk(file, hash, chunkSize, totalChunks, currentChunk + 1, options, resolve, reject);
+                uploadChunk(file, hash, chunkSize, totalChunks, currentChunk + 1, options, resolve, reject, progressFill, progressText, progressContainer);
               } else {
-                mergeChunks(hash, options, resolve, reject);
+                mergeChunks(hash, options, resolve, reject, progressFill, progressText, progressContainer);
               }
             } else {
+              progressText.textContent = `上传失败: ${response.message}`;
+              progressFill.style.backgroundColor = '#f44336';
+              // 3秒后自动移除进度条
+              setTimeout(() => {
+                progressContainer.remove();
+                // 如果没有进度条了，隐藏整个进度容器
+                const uploadProgress = document.getElementById('uploadProgress');
+                if (uploadProgress && uploadProgress.children.length === 0) {
+                  uploadProgress.style.display = 'none';
+                }
+              }, 3000);
               reject(new Error(response.message));
             }
           } catch (e) {
+            progressText.textContent = `上传失败: ${e.message}`;
+            progressFill.style.backgroundColor = '#f44336';
+            // 3秒后自动移除进度条
+            setTimeout(() => {
+              progressContainer.remove();
+              // 如果没有进度条了，隐藏整个进度容器
+              const uploadProgress = document.getElementById('uploadProgress');
+              if (uploadProgress && uploadProgress.children.length === 0) {
+                uploadProgress.style.display = 'none';
+              }
+            }, 3000);
             reject(e);
           }
         } else {
+          progressText.textContent = '上传失败: 网络错误';
+          progressFill.style.backgroundColor = '#f44336';
+          // 3秒后自动移除进度条
+          setTimeout(() => {
+            progressContainer.remove();
+            // 如果没有进度条了，隐藏整个进度容器
+            const uploadProgress = document.getElementById('uploadProgress');
+            if (uploadProgress && uploadProgress.children.length === 0) {
+              uploadProgress.style.display = 'none';
+            }
+          }, 3000);
           reject(new Error('上传失败'));
         }
       };
       
       xhr.onerror = () => {
+        progressText.textContent = '上传失败: 网络错误';
+        progressFill.style.backgroundColor = '#f44336';
+        // 3秒后自动移除进度条
+        setTimeout(() => {
+          progressContainer.remove();
+          // 如果没有进度条了，隐藏整个进度容器
+          const uploadProgress = document.getElementById('uploadProgress');
+          if (uploadProgress && uploadProgress.children.length === 0) {
+            uploadProgress.style.display = 'none';
+          }
+        }, 3000);
         reject(new Error('上传失败'));
       };
       
       xhr.send(formData);
     }
 
-    function mergeChunks(hash, options, resolve, reject) {
+    function mergeChunks(hash, options, resolve, reject, progressFill, progressText, progressContainer) {
       progressText.textContent = `合并中... ${options.filename}`;
       
       const formData = new FormData();
@@ -1440,19 +1538,73 @@ require_once $configFiles[0];
           try {
             const response = JSON.parse(xhr.responseText);
             if (response.success) {
+              progressText.textContent = `上传完成: ${options.filename}`;
+              // 3秒后自动移除进度条
+              setTimeout(() => {
+                progressContainer.remove();
+                // 如果没有进度条了，隐藏整个进度容器
+                const uploadProgress = document.getElementById('uploadProgress');
+                if (uploadProgress && uploadProgress.children.length === 0) {
+                  uploadProgress.style.display = 'none';
+                }
+              }, 3000);
               resolve();
             } else {
+              progressText.textContent = `合并失败: ${response.message}`;
+              progressFill.style.backgroundColor = '#f44336';
+              // 3秒后自动移除进度条
+              setTimeout(() => {
+                progressContainer.remove();
+                // 如果没有进度条了，隐藏整个进度容器
+                const uploadProgress = document.getElementById('uploadProgress');
+                if (uploadProgress && uploadProgress.children.length === 0) {
+                  uploadProgress.style.display = 'none';
+                }
+              }, 3000);
               reject(new Error(response.message));
             }
           } catch (e) {
+            progressText.textContent = `合并失败: ${e.message}`;
+            progressFill.style.backgroundColor = '#f44336';
+            // 3秒后自动移除进度条
+            setTimeout(() => {
+              progressContainer.remove();
+              // 如果没有进度条了，隐藏整个进度容器
+              const uploadProgress = document.getElementById('uploadProgress');
+              if (uploadProgress && uploadProgress.children.length === 0) {
+                uploadProgress.style.display = 'none';
+              }
+            }, 3000);
             reject(e);
           }
         } else {
+          progressText.textContent = '合并失败: 网络错误';
+          progressFill.style.backgroundColor = '#f44336';
+          // 3秒后自动移除进度条
+          setTimeout(() => {
+            progressContainer.remove();
+            // 如果没有进度条了，隐藏整个进度容器
+            const uploadProgress = document.getElementById('uploadProgress');
+            if (uploadProgress && uploadProgress.children.length === 0) {
+              uploadProgress.style.display = 'none';
+            }
+          }, 3000);
           reject(new Error('合并失败'));
         }
       };
       
       xhr.onerror = () => {
+        progressText.textContent = '合并失败: 网络错误';
+        progressFill.style.backgroundColor = '#f44336';
+        // 3秒后自动移除进度条
+        setTimeout(() => {
+          progressContainer.remove();
+          // 如果没有进度条了，隐藏整个进度容器
+          const uploadProgress = document.getElementById('uploadProgress');
+          if (uploadProgress && uploadProgress.children.length === 0) {
+            uploadProgress.style.display = 'none';
+          }
+        }, 3000);
         reject(new Error('合并失败'));
       };
       
@@ -1564,8 +1716,8 @@ require_once $configFiles[0];
           <div class="file-card">
             <input type="checkbox" class="file-checkbox" onclick="event.stopPropagation(); toggleFileSelection(${file.id})" data-file-id="${file.id}">
             <div class="file-actions">
-              <button class="file-action-btn" onclick="event.stopPropagation(); previewFile(${file.id})" title="预览">👁️</button>
-              <button class="file-action-btn" onclick="event.stopPropagation(); downloadFile(${file.id})" title="下载">⬇️</button>
+              <a href="preview.php?token=${file.token}" class="file-action-btn" target="_blank" title="预览">👁️</a>
+              <a href="download.php?token=${file.token}" class="file-action-btn" target="_blank" title="下载">⬇️</a>
               <button class="file-action-btn" onclick="event.stopPropagation(); showEditModal(${file.id})" title="编辑">✏️</button>
               <button class="file-action-btn" onclick="event.stopPropagation(); deleteFile(${file.id})" title="删除">🗑️</button>
             </div>
@@ -1730,9 +1882,9 @@ require_once $configFiles[0];
       });
     }
 
-    function downloadFile(id) {
+    function downloadFile(token) {
       const link = document.createElement('a');
-      link.href = 'download.php?id=' + id;
+      link.href = 'download.php?token=' + token;
       link.target = '_blank';
       link.style.display = 'none';
       document.body.appendChild(link);
@@ -1742,8 +1894,8 @@ require_once $configFiles[0];
       }, 100);
     }
 
-    function previewFile(id) {
-      window.open('preview.php?id=' + id, '_blank');
+    function previewFile(token) {
+      window.open('preview.php?token=' + token, '_blank');
     }
 
     function showEditModal(fileId) {
@@ -1820,16 +1972,24 @@ require_once $configFiles[0];
     function toggleFileSelection(fileId) {
       const fileCard = document.querySelector(`.file-checkbox[data-file-id="${fileId}"]`).closest('.file-card');
       const checkbox = document.querySelector(`.file-checkbox[data-file-id="${fileId}"]`);
-      if (selectedFiles.has(fileId)) {
-        selectedFiles.delete(fileId);
-        fileCard.classList.remove('selected');
-        if (checkbox) checkbox.checked = false;
-      } else {
-        selectedFiles.add(fileId);
-        fileCard.classList.add('selected');
-        if (checkbox) checkbox.checked = true;
+      
+      // 从文件卡片中提取token
+      const previewLink = fileCard.querySelector('a[href^="preview.php?token="]');
+      if (previewLink) {
+        const href = previewLink.getAttribute('href');
+        const token = href.match(/token=(.*?)(&|$)/)[1];
+        
+        if (selectedFiles.has(token)) {
+          selectedFiles.delete(token);
+          fileCard.classList.remove('selected');
+          if (checkbox) checkbox.checked = false;
+        } else {
+          selectedFiles.add(token);
+          fileCard.classList.add('selected');
+          if (checkbox) checkbox.checked = true;
+        }
+        updateSelectionUI();
       }
-      updateSelectionUI();
     }
 
     function updateSelectionUI() {
@@ -1839,8 +1999,10 @@ require_once $configFiles[0];
       const selectAllCheckbox = document.getElementById('selectAllCheckbox');
       const allFileCheckboxes = document.querySelectorAll('.file-checkbox');
       
-      // 只有在有选中文件时，才显示批量操作区域
-      if (selectedCount > 0) {
+      // 显示批量操作区域的条件：
+      // 1. 有选中文件，或者
+      // 2. 全选复选框存在且被点击过（即使现在未选中）
+      if (selectedCount > 0 || (selectAllCheckbox && selectAllCheckbox.dataset.clicked === 'true')) {
         batchActions.classList.add('show');
       } else {
         batchActions.classList.remove('show');
@@ -1854,20 +2016,21 @@ require_once $configFiles[0];
     }
 
     function clearSelection() {
-      selectedFiles.forEach(fileId => {
-        const fileCard = document.querySelector(`.file-checkbox[data-file-id="${fileId}"]`).closest('.file-card');
-        const checkbox = document.querySelector(`.file-checkbox[data-file-id="${fileId}"]`);
+      // 找到所有选中的文件卡片并移除选中状态
+      const selectedCheckboxes = document.querySelectorAll('.file-checkbox:checked');
+      selectedCheckboxes.forEach(checkbox => {
+        const fileCard = checkbox.closest('.file-card');
         if (fileCard) {
           fileCard.classList.remove('selected');
         }
-        if (checkbox) {
-          checkbox.checked = false;
-        }
+        checkbox.checked = false;
       });
       // 同时取消全选复选框的勾选状态
       const selectAllCheckbox = document.getElementById('selectAllCheckbox');
       if (selectAllCheckbox) {
         selectAllCheckbox.checked = false;
+        // 重置全选复选框的点击状态
+        delete selectAllCheckbox.dataset.clicked;
       }
       selectedFiles.clear();
       updateSelectionUI();
@@ -1877,24 +2040,30 @@ require_once $configFiles[0];
       const selectAllCheckbox = document.getElementById('selectAllCheckbox');
       const allFileCheckboxes = document.querySelectorAll('.file-checkbox');
       
+      // 标记全选复选框已被点击
+      selectAllCheckbox.dataset.clicked = 'true';
+      
       if (selectAllCheckbox.checked) {
         // 全选
         allFileCheckboxes.forEach(checkbox => {
-          const fileId = parseInt(checkbox.dataset.fileId);
-          if (fileId) {
-            selectedFiles.add(fileId);
+          const fileCard = checkbox.closest('.file-card');
+          // 从文件卡片中提取token
+          const previewLink = fileCard.querySelector('a[href^="preview.php?token="]');
+          if (previewLink) {
+            const href = previewLink.getAttribute('href');
+            const token = href.match(/token=(.*?)(&|$)/)[1];
+            selectedFiles.add(token);
             checkbox.checked = true;
-            checkbox.closest('.file-card').classList.add('selected');
+            fileCard.classList.add('selected');
           }
         });
       } else {
         // 取消全选
         allFileCheckboxes.forEach(checkbox => {
-          const fileId = parseInt(checkbox.dataset.fileId);
-          if (fileId) {
-            selectedFiles.delete(fileId);
-            checkbox.checked = false;
-            checkbox.closest('.file-card').classList.remove('selected');
+          checkbox.checked = false;
+          const fileCard = checkbox.closest('.file-card');
+          if (fileCard) {
+            fileCard.classList.remove('selected');
           }
         });
         selectedFiles.clear();
@@ -1908,25 +2077,67 @@ require_once $configFiles[0];
       
       if (!confirm(`确定要删除这 ${selectedFiles.size} 个文件吗？`)) return;
       
-      const fileIds = Array.from(selectedFiles);
+      const tokens = Array.from(selectedFiles);
       
       fetch('delete.php', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded'
         },
-        body: `ids=${fileIds.join(',')}`
+        body: `tokens=${tokens.join(',')}`
       })
       .then(response => response.json())
       .then(data => {
         if (data.success) {
-          showNotification(`成功删除 ${fileIds.length} 个文件`, 'success');
+          showNotification(`成功删除 ${tokens.length} 个文件`, 'success');
           selectedFiles.clear();
           updateSelectionUI();
           loadFiles();
         } else {
           showNotification('删除失败：' + data.message, 'error');
         }
+      });
+    }
+
+    function batchDownloadZip() {
+      if (selectedFiles.size === 0) return;
+      
+      const tokens = Array.from(selectedFiles);
+      
+      // 显示加载提示
+      showNotification('正在准备压缩文件，请稍候...', 'info');
+      
+      // 发送请求到服务器压缩文件
+      fetch('download.php', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        body: `action=zip&tokens=${tokens.join(',')}`
+      })
+      .then(response => {
+        if (response.ok) {
+          // 创建下载链接
+          const link = document.createElement('a');
+          link.href = `download.php?action=zip&tokens=${tokens.join(',')}`;
+          link.target = '_blank';
+          link.style.display = 'none';
+          document.body.appendChild(link);
+          
+          // 触发下载
+          link.click();
+          
+          // 清理
+          setTimeout(() => {
+            document.body.removeChild(link);
+            showNotification(`开始下载压缩文件`, 'success');
+          }, 100);
+        } else {
+          showNotification('压缩文件失败', 'error');
+        }
+      })
+      .catch(error => {
+        showNotification('压缩文件失败: ' + error.message, 'error');
       });
     }
 
