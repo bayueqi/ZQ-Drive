@@ -1301,7 +1301,14 @@ require_once $configFiles[0];
       
       uploadModal.classList.remove('show');
       uploadMultipleFiles(filesToUpload).finally(() => {
-        // 上传完成后不需要清空currentFiles，因为已经使用了副本
+        // 上传完成后清空模态框的值
+        modalFileName.value = '';
+        modalDescription.value = '';
+        // 清空文件输入容器
+        const container = document.getElementById('fileInputsContainer');
+        if (container) {
+          container.innerHTML = '';
+        }
       });
     }
 
