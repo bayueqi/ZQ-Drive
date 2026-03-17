@@ -1,5 +1,12 @@
 <?php
-require_once 'config.php';
+// 查找 config 文件
+$configFiles = glob('config_*.php');
+if (empty($configFiles)) {
+    die('配置文件不存在');
+}
+
+// 加载第一个找到的 config 文件
+require_once $configFiles[0];
 
 // 检查登录状态
 session_start();

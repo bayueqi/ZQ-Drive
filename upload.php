@@ -1,5 +1,12 @@
 <?php
-require_once 'config.php';
+// 查找 config 文件
+$configFiles = glob('config_*.php');
+if (empty($configFiles)) {
+    die('配置文件不存在');
+}
+
+// 加载第一个找到的 config 文件
+require_once $configFiles[0];
 
 header('Content-Type: application/json');
 
@@ -42,6 +49,7 @@ function handleChunkUpload() {
         exit;
     }
 
+    // 创建临时目录
     $tempDir = 'temp_chunks/' . $fileHash . '/';
     if (!is_dir($tempDir)) {
         mkdir($tempDir, 0755, true);
@@ -77,7 +85,9 @@ function handleMergeRequest() {
         exit;
     }
 
-    $uploadDir = 'uploads/';
+    // 生成随机上传目录名称
+    $randomDir = 'upload_' . bin2hex(random_bytes(8));
+    $uploadDir = $randomDir . '/';
     if (!is_dir($uploadDir)) {
         mkdir($uploadDir, 0755, true);
     }

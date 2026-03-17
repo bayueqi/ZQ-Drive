@@ -1,7 +1,13 @@
 <?php
 session_start();
 
-if (!file_exists('config.php') || !file_exists('config.lock')) {
+// 查找 config 文件
+$configFiles = glob('config_*.php');
+if (empty($configFiles)) {
+    die('配置文件不存在');
+}
+
+if (!file_exists($configFiles[0]) || !file_exists('config.lock')) {
     header('Location: setup.php');
     exit;
 }
@@ -11,7 +17,8 @@ if (!isset($_SESSION['logged_in']) || $_SESSION['logged_in'] !== true) {
     exit;
 }
 
-require_once 'config.php';
+// 加载第一个找到的 config 文件
+require_once $configFiles[0];
 ?>
 <!DOCTYPE html>
 <html lang="zh-CN">

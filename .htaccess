@@ -1,9 +1,0 @@
-<Directory "uploads">
-    Order Deny,Allow
-    Deny from all
-</Directory>
-
-<Directory "temp_chunks">
-    Order Deny,Allow
-    Deny from all
-</Directory>
