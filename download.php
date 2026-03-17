@@ -1,6 +1,12 @@
 <?php
 require_once 'config.php';
 
+// 检查登录状态
+session_start();
+if (!isset($_SESSION['logged_in']) || $_SESSION['logged_in'] !== true) {
+    die('未授权访问');
+}
+
 if (!isset($_GET['id'])) {
     die('缺少文件 ID');
 }

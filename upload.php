@@ -18,6 +18,13 @@ if (isset($_POST['chunk']) && isset($_POST['totalChunks']) && isset($_POST['file
 }
 
 function handleChunkUpload() {
+    // 检查登录状态
+    session_start();
+    if (!isset($_SESSION['logged_in']) || $_SESSION['logged_in'] !== true) {
+        echo json_encode(['success' => false, 'message' => '未授权访问']);
+        exit;
+    }
+
     if (!isset($_FILES['chunk'])) {
         echo json_encode(['success' => false, 'message' => '未收到文件块']);
         exit;
@@ -56,6 +63,13 @@ function handleMergeRequest() {
     $fileType = $_POST['fileType'] ?? '';
     $description = $_POST['description'] ?? '';
     $folderId = intval($_POST['folder_id'] ?? 0);
+
+    // 检查登录状态
+    session_start();
+    if (!isset($_SESSION['logged_in']) || $_SESSION['logged_in'] !== true) {
+        echo json_encode(['success' => false, 'message' => '未授权访问']);
+        exit;
+    }
 
     $tempDir = 'temp_chunks/' . $fileHash . '/';
     if (!is_dir($tempDir)) {
